@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import time
 from datetime import timedelta
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -10,13 +11,12 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Channel IDs
-PANEL_CHANNEL_ID = 1379861430500855989
-LEADERBOARD_CHANNEL_ID = 1379861500877078721
-ADMIN_ROLE_ID = 1379861837075452035
+# Environment variables
+PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID", "1379861430500855989"))
+LEADERBOARD_CHANNEL_ID = int(os.getenv("LEADERBOARD_CHANNEL_ID", "1379861500877078721"))
+ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "1379861837075452035"))
 
-# Runtime memory (cleared if bot restarts)
-user_sessions = {}  # {user_id: {"status": str, "online_start": float, "afk_start": float, "online_total": float, "afk_total": float}}
+user_sessions = {}
 leaderboard_message = None
 
 def format_time(seconds):
@@ -127,9 +127,7 @@ async def update_leaderboard():
         user_display = get_user_display(uid, channel.guild)
         lines.append(f"**{user_display}** - 🟢 {format_time(online)} | 🟡 {format_time(afk)}")
 
-    text = "__**Leaderboard**__
-" + ("
-".join(lines) if lines else "*No activity yet.*")
+    text = "__**Leaderboard**__\n" + ("\n".join(lines) if lines else "*No activity yet.*")
 
     if leaderboard_message:
         await leaderboard_message.edit(content=text)
@@ -142,8 +140,7 @@ async def on_ready():
     panel_channel = bot.get_channel(PANEL_CHANNEL_ID)
     if panel_channel:
         await panel_channel.purge(limit=10)
-        await panel_channel.send("**Playtime Tracker**
-Click your current status:", view=PlaytimeButtons())
+        await panel_channel.send("**Playtime Tracker**\nClick your current status:", view=PlaytimeButtons())
 
     update_leaderboard.start()
 
