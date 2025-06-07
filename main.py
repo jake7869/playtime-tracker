@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import time
 from datetime import timedelta
 import os
+import re
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -11,15 +12,29 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID", "1379861430500855989"))
+PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID", "1381017996524257442"))
 LEADERBOARD_CHANNEL_ID = int(os.getenv("LEADERBOARD_CHANNEL_ID", "1379861500877078721"))
 ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "1379861837075452035"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1381056616362803330"))
 
 user_sessions = {}
 leaderboard_message = None
+log_channel = None
 
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
+
+def parse_duration(duration_str):
+    match = re.fullmatch(r"(\d+)([smh])", duration_str.strip().lower())
+    if not match:
+        return None
+    value, unit = int(match[1]), match[2]
+    return value * {"s": 1, "m": 60, "h": 3600}[unit]
+
+async def log_to_discord(message):
+    print("[LOG]", message)
+    if log_channel:
+        await log_channel.send(message)
 
 def get_user_display(user_id, guild):
     member = guild.get_member(user_id)
@@ -33,13 +48,13 @@ class PlaytimeButtons(discord.ui.View):
     async def go_online(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.setdefault(uid, {"status": None, "online_total": 0, "afk_total": 0, "online_start": None, "afk_start": None})
+        await log_to_discord(f"🟢 **{interaction.user.display_name}** is now ONLINE.")
 
         if session["status"] == "online":
             await interaction.response.send_message("You're already online.", ephemeral=True)
             return
         if session["status"] == "afk":
-            afk_time = time.time() - session["afk_start"]
-            session["afk_total"] += afk_time
+            session["afk_total"] += time.time() - session["afk_start"]
 
         session["online_start"] = time.time()
         session["status"] = "online"
@@ -49,13 +64,13 @@ class PlaytimeButtons(discord.ui.View):
     async def go_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.get(uid)
+        await log_to_discord(f"🟡 **{interaction.user.display_name}** is now AFK.")
 
         if not session or session["status"] != "online":
             await interaction.response.send_message("You must be online to go AFK.", ephemeral=True)
             return
 
-        online_time = time.time() - session["online_start"]
-        session["online_total"] += online_time
+        session["online_total"] += time.time() - session["online_start"]
         session["afk_start"] = time.time()
         session["status"] = "afk"
         await interaction.response.send_message("You're now AFK.", ephemeral=True)
@@ -64,13 +79,13 @@ class PlaytimeButtons(discord.ui.View):
     async def back_from_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.get(uid)
+        await log_to_discord(f"🔁 **{interaction.user.display_name}** is back from AFK.")
 
         if not session or session["status"] != "afk":
             await interaction.response.send_message("You must be AFK to come back.", ephemeral=True)
             return
 
-        afk_time = time.time() - session["afk_start"]
-        session["afk_total"] += afk_time
+        session["afk_total"] += time.time() - session["afk_start"]
         session["online_start"] = time.time()
         session["status"] = "online"
         await interaction.response.send_message("You're back from AFK and now online.", ephemeral=True)
@@ -79,6 +94,7 @@ class PlaytimeButtons(discord.ui.View):
     async def go_offline(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.get(uid)
+        await log_to_discord(f"🔴 **{interaction.user.display_name}** is now OFFLINE.")
 
         if not session or session["status"] not in ["online", "afk"]:
             await interaction.response.send_message("You're already offline.", ephemeral=True)
@@ -95,15 +111,22 @@ class PlaytimeButtons(discord.ui.View):
         session["afk_start"] = None
         await interaction.response.send_message("You're now offline. Session saved.", ephemeral=True)
 
-    @discord.ui.button(label="♻️ Reset Leaderboard", style=discord.ButtonStyle.danger, custom_id="reset")
-    async def reset_leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
-            await interaction.response.send_message("You don't have permission to reset the leaderboard.", ephemeral=True)
-            return
+@bot.slash_command(name="remove_time", description="Remove online time from a user (admin only).")
+async def remove_time(ctx: discord.ApplicationContext, user: discord.Member, amount: str):
+    if ADMIN_ROLE_ID not in [role.id for role in ctx.author.roles]:
+        await ctx.respond("You don't have permission to use this command.", ephemeral=True)
+        return
 
-        user_sessions.clear()
-        await update_leaderboard()
-        await interaction.response.send_message("Leaderboard has been reset.", ephemeral=True)
+    seconds = parse_duration(amount)
+    if seconds is None:
+        await ctx.respond("Invalid format. Use 10s, 5m, or 2h.", ephemeral=True)
+        return
+
+    session = user_sessions.setdefault(user.id, {"status": "offline", "online_total": 0, "afk_total": 0, "online_start": None, "afk_start": None})
+    session["online_total"] = max(0, session["online_total"] - seconds)
+
+    await log_to_discord(f"🧮 **{ctx.author.display_name}** removed {format_time(seconds)} from **{user.display_name}**.")
+    await ctx.respond(f"Removed {format_time(seconds)} from {user.mention}'s online time.", ephemeral=False)
 
 @tasks.loop(seconds=30)
 async def update_leaderboard():
@@ -123,11 +146,10 @@ async def update_leaderboard():
         elif data["status"] == "afk":
             afk += time.time() - data["afk_start"]
 
-        user_display = get_user_display(uid, channel.guild)
-        lines.append(f"**{user_display}** - 🟢 {format_time(online)} | 🟡 {format_time(afk)}")
+        name = get_user_display(uid, channel.guild)
+        lines.append(f"**{name}** - 🟢 {format_time(online)} | 🟡 {format_time(afk)}")
 
     text = "__**Leaderboard**__\n" + ("\n".join(lines) if lines else "*No activity yet.*")
-
     if leaderboard_message:
         await leaderboard_message.edit(content=text)
     else:
@@ -135,9 +157,11 @@ async def update_leaderboard():
 
 @bot.event
 async def on_ready():
+    global log_channel
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
-
     panel_channel = bot.get_channel(PANEL_CHANNEL_ID)
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+
     if not panel_channel:
         print(f"❌ Could not find panel channel ID: {PANEL_CHANNEL_ID}")
     else:
