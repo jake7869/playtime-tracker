@@ -135,11 +135,19 @@ async def update_leaderboard():
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+
     panel_channel = bot.get_channel(PANEL_CHANNEL_ID)
-    if panel_channel:
-        await panel_channel.purge(limit=10)
-        await panel_channel.send("**Playtime Tracker**\nClick your current status:", view=PlaytimeButtons())
+    if not panel_channel:
+        print(f"❌ Could not find panel channel ID: {PANEL_CHANNEL_ID}")
+    else:
+        try:
+            print(f"📢 Found panel channel: {panel_channel.name}")
+            await panel_channel.purge(limit=10)
+            await panel_channel.send("**Playtime Tracker**\nClick your current status:", view=PlaytimeButtons())
+            print("✅ Panel sent successfully.")
+        except Exception as e:
+            print(f"❌ Failed to send panel: {e}")
 
     update_leaderboard.start()
 
