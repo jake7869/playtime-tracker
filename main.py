@@ -11,8 +11,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Environment variables
-PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID", "1381017996524257442"))
+PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID", "1379861430500855989"))
 LEADERBOARD_CHANNEL_ID = int(os.getenv("LEADERBOARD_CHANNEL_ID", "1379861500877078721"))
 ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "1379861837075452035"))
 
@@ -31,7 +30,7 @@ class PlaytimeButtons(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="🟢 Online", style=discord.ButtonStyle.success, custom_id="online")
-    async def go_online(self, button, interaction):
+    async def go_online(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.setdefault(uid, {"status": None, "online_total": 0, "afk_total": 0, "online_start": None, "afk_start": None})
 
@@ -47,7 +46,7 @@ class PlaytimeButtons(discord.ui.View):
         await interaction.response.send_message("You're now marked as online.", ephemeral=True)
 
     @discord.ui.button(label="🟡 AFK", style=discord.ButtonStyle.secondary, custom_id="afk")
-    async def go_afk(self, button, interaction):
+    async def go_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.get(uid)
 
@@ -62,7 +61,7 @@ class PlaytimeButtons(discord.ui.View):
         await interaction.response.send_message("You're now AFK.", ephemeral=True)
 
     @discord.ui.button(label="🔁 Back from AFK", style=discord.ButtonStyle.primary, custom_id="back_from_afk")
-    async def back_from_afk(self, button, interaction):
+    async def back_from_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.get(uid)
 
@@ -77,7 +76,7 @@ class PlaytimeButtons(discord.ui.View):
         await interaction.response.send_message("You're back from AFK and now online.", ephemeral=True)
 
     @discord.ui.button(label="🔴 Offline", style=discord.ButtonStyle.danger, custom_id="offline")
-    async def go_offline(self, button, interaction):
+    async def go_offline(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         session = user_sessions.get(uid)
 
@@ -97,7 +96,7 @@ class PlaytimeButtons(discord.ui.View):
         await interaction.response.send_message("You're now offline. Session saved.", ephemeral=True)
 
     @discord.ui.button(label="♻️ Reset Leaderboard", style=discord.ButtonStyle.danger, custom_id="reset")
-    async def reset_leaderboard(self, button, interaction):
+    async def reset_leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
         if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
             await interaction.response.send_message("You don't have permission to reset the leaderboard.", ephemeral=True)
             return
