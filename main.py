@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import time
 from datetime import timedelta
 import os
@@ -19,6 +20,7 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "1381056616362803330"))
 
 user_sessions = {}
 leaderboard_message = None
+status_message = None
 log_channel = None
 
 def format_time(seconds):
@@ -47,7 +49,7 @@ class PlaytimeButtons(discord.ui.View):
     @discord.ui.button(label="🟢 Online", style=discord.ButtonStyle.success, custom_id="online")
     async def go_online(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
-        session = user_sessions.setdefault(uid, {"status": None, "online_total": 0, "afk_total": 0, "online_start": None, "afk_start": None})
+        session = user_sessions.setdefault(uid, {"status": "offline", "online_total": 0, "afk_total": 0, "online_start": None, "afk_start": None})
         await log_to_discord(f"🟢 **{interaction.user.display_name}** is now ONLINE.")
 
         if session["status"] == "online":
@@ -111,22 +113,60 @@ class PlaytimeButtons(discord.ui.View):
         session["afk_start"] = None
         await interaction.response.send_message("You're now offline. Session saved.", ephemeral=True)
 
-@bot.slash_command(name="remove_time", description="Remove online time from a user (admin only).")
-async def remove_time(ctx: discord.ApplicationContext, user: discord.Member, amount: str):
-    if ADMIN_ROLE_ID not in [role.id for role in ctx.author.roles]:
-        await ctx.respond("You don't have permission to use this command.", ephemeral=True)
+@bot.tree.command(name="remove_time", description="Remove online time from a user (admin only).")
+@app_commands.describe(user="User to remove time from", amount="Amount (10s, 5m, 2h)")
+async def remove_time(interaction: discord.Interaction, user: discord.Member, amount: str):
+    if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
 
     seconds = parse_duration(amount)
     if seconds is None:
-        await ctx.respond("Invalid format. Use 10s, 5m, or 2h.", ephemeral=True)
+        await interaction.response.send_message("Invalid format. Use 10s, 5m, or 2h.", ephemeral=True)
         return
 
     session = user_sessions.setdefault(user.id, {"status": "offline", "online_total": 0, "afk_total": 0, "online_start": None, "afk_start": None})
     session["online_total"] = max(0, session["online_total"] - seconds)
 
-    await log_to_discord(f"🧮 **{ctx.author.display_name}** removed {format_time(seconds)} from **{user.display_name}**.")
-    await ctx.respond(f"Removed {format_time(seconds)} from {user.mention}'s online time.", ephemeral=False)
+    await log_to_discord(f"🧮 **{interaction.user.display_name}** removed {format_time(seconds)} from **{user.display_name}**.")
+    await interaction.response.send_message(f"Removed {format_time(seconds)} from {user.mention}'s online time.")
+
+@bot.tree.command(name="reset_leaderboard", description="Reset all playtime data (admin only).")
+async def reset_leaderboard(interaction: discord.Interaction):
+    if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You don't have permission to reset.", ephemeral=True)
+        return
+    user_sessions.clear()
+    await log_to_discord(f"🧨 **{interaction.user.display_name}** reset the entire leaderboard.")
+    await interaction.response.send_message("Leaderboard has been reset.")
+    await update_leaderboard()
+    await update_status_tracker()
+
+async def update_status_tracker():
+    global status_message
+    channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
+    if not channel:
+        return
+
+    online, afk, offline = [], [], []
+    for uid, data in user_sessions.items():
+        user = get_user_display(uid, channel.guild)
+        if data["status"] == "online":
+            online.append(user)
+        elif data["status"] == "afk":
+            afk.append(user)
+        else:
+            offline.append(user)
+
+    text = "__**Live Status Tracker**__\n"
+    text += f"🟢 **Online:** {', '.join(online) if online else 'None'}\n"
+    text += f"🟡 **AFK:** {', '.join(afk) if afk else 'None'}\n"
+    text += f"🔴 **Offline:** {', '.join(offline) if offline else 'None'}"
+
+    if status_message:
+        await status_message.edit(content=text)
+    else:
+        status_message = await channel.send(text)
 
 @tasks.loop(seconds=30)
 async def update_leaderboard():
@@ -155,6 +195,8 @@ async def update_leaderboard():
     else:
         leaderboard_message = await channel.send(text)
 
+    await update_status_tracker()
+
 @bot.event
 async def on_ready():
     global log_channel
@@ -162,17 +204,11 @@ async def on_ready():
     panel_channel = bot.get_channel(PANEL_CHANNEL_ID)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
 
-    if not panel_channel:
-        print(f"❌ Could not find panel channel ID: {PANEL_CHANNEL_ID}")
-    else:
-        try:
-            print(f"📢 Found panel channel: {panel_channel.name}")
-            await panel_channel.purge(limit=10)
-            await panel_channel.send("**Playtime Tracker**\nClick your current status:", view=PlaytimeButtons())
-            print("✅ Panel sent successfully.")
-        except Exception as e:
-            print(f"❌ Failed to send panel: {e}")
+    if panel_channel:
+        await panel_channel.purge(limit=10)
+        await panel_channel.send("**Playtime Tracker**\nClick your current status:", view=PlaytimeButtons())
 
+    await bot.tree.sync()
     update_leaderboard.start()
 
 bot.run(os.getenv("DISCORD_TOKEN"))
