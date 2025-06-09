@@ -114,7 +114,7 @@ async def on_ready():
 
     if panel_channel:
         await panel_channel.purge(limit=5)
-        await panel_channel.send("**Playtime Tracker**
+      await panel_channel.send("**Playtime Tracker**\\nClick your current status:", view=PlaytimeButtons())
 Click your current status:", view=PlaytimeButtons())
     if leaderboard_channel:
         leaderboard_message = await leaderboard_channel.send("📊 Loading leaderboard...")
